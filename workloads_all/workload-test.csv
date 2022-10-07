@@ -1,4 +1,0 @@
-name,time,application,num_replicas,batch_size
-cifar10-1,0,cifar10,16,4096
-imagenet-1,0,imagenet,16,1540
-bert-1,0,bert,16,384

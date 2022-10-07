@@ -19,6 +19,7 @@ from pollux_mip import WeightedMIPPolicy
 from gavel import GavelPolicy
 from pollux_mip_fix import WeightedMIPFIXPolicy
 from pmp import PmpPolicy
+from utils import job_name_map
 
 
 def multi_simulate(args):
@@ -30,6 +31,8 @@ def multi_simulate(args):
     # cluster_nnodes = {"aws" : 6, "dgx-ext" : 2, "rtx" : 3}
     cluster_ngpus_per_node = {"rtx" : 8, "dgx-ext" : 8}
     cluster_nnodes = {"rtx" : 3, "dgx-ext" : 2}
+    # cluster_ngpus_per_node = {"rtx" : 8}
+    # cluster_nnodes = {"rtx" : 1}
     if args.cluster_scale is not None:
         for k in cluster_nnodes.keys():
             cluster_nnodes[k] = cluster_nnodes[k] * args.cluster_scale
@@ -68,9 +71,12 @@ def multi_simulate(args):
         for job in cluster.jobs:
             job.seed_profiles(args.oracle_num_nodes, args.oracle_num_replicas)
 
+    contain_pmp_jobs = False
+
     while not cluster.all_complete():
-        if args.debug:
+        if args.debug and contain_pmp_jobs:
             input('\npress to continue')
+        contain_pmp_jobs = False
         ####### STEP #######        
         cluster.step(args.interval)
 
@@ -83,6 +89,8 @@ def multi_simulate(args):
                 #       val["name"], val["epoch"], val["num_restarts"], val["batch_size"], val["placement"], val["n_avg"], val["cluster"]))
                 print("    {}:\t\t[epoch {}]\t[restarts {}]\t[batch size {}]\t[placement {}]\t[n_avg {}]".format(
                       val["name"], val["epoch"], val["num_restarts"], val["batch_size"], val["placement"], val["n_avg"]))
+                if val['name'].split('-')[0] in job_name_map:
+                    contain_pmp_jobs = True
         # used_gpus = get_used_gpus(cluster.logs[-1], cluster.current_time)
         # print("GPU utilization: {}".format(used_gpus))
         print("Completed jobs:")

@@ -112,9 +112,10 @@ class WeightedMIPPolicy(object):
         # store cluster config for future use
         self.cluster_num_nodes, self.cluster_ngpus_per_node = cluster_num_nodes, cluster_num_gpus
 
-        self.cluster_spec = {cname: cluster_num_nodes[cname] * cluster_num_gpus[cname] for cname in self.cluster_ordering}
-        self.pmp_configs = slice_cluster(self.cluster_spec, homogeneous=not self.hete)
-        print(f'PMP configs: {self.pmp_configs}')
+        if self.allow_pmp:
+            self.cluster_spec = {cname: cluster_num_nodes[cname] * cluster_num_gpus[cname] for cname in self.cluster_ordering}
+            self.pmp_configs = slice_cluster(self.cluster_spec, homogeneous=not self.hete)
+            print(f'PMP configs: {self.pmp_configs}')
 
     
     def update_timeshare_penalties(self, new_allocs):
@@ -315,7 +316,6 @@ class WeightedMIPPolicy(object):
             for node_idx, node in k_nodes.items():
                 num_gpus[k] += node.resources["nvidia.com/gpu"]
         num_configs = {k : len(v[1]) for k, v in self.configs.items()}
-        num_pmp_configs = len(self.pmp_configs)
 
         # single-cluster speedup-matrix
         cluster_goodput_matrices = {k : np.zeros((num_jobs, num_configs[k]), dtype=np.float32) 
@@ -637,6 +637,7 @@ class WeightedMIPPolicy(object):
         # power-up speedup matrix 
         if not self.allow_pmp:
             A = np.power(speedup_matrix, self.p_fairness)
+            print(f'### final speedup matrix:\n{A}')
         else:
             # NOTE: append goodputs for pmp job
             speedup_matrix_ = np.hstack((speedup_matrix, np.zeros((speedup_matrix.shape[0], len(self.pmp_configs)), dtype=np.float32)))
@@ -661,8 +662,7 @@ class WeightedMIPPolicy(object):
 
 
             A = np.power(speedup_matrix_, self.p_fairness)
-
-            print(f'### final speedup matrix with pmp:\n{speedup_matrix_}')
+            print(f'### final speedup matrix with pmp:\n{A}')            
         
         A = np.round(A, decimals=2)
         # TODO(suhasj): fix this clipping of matrix
@@ -684,8 +684,8 @@ class WeightedMIPPolicy(object):
         if jobnames is not None:
             for i, jobname in enumerate(jobnames):
                 # penalty for no-alloc in both sub-clusters
-                obj_expr += opt_lambda_no_alloc * (1 - cp.sum(x[i, :]))
-
+                # obj_expr += (opt_lambda_no_alloc if job_info[jobname].app_name in job_name_map else -100) * (1 - cp.sum(x[i, :]))
+                obj_expr += (opt_lambda_no_alloc if job_info[jobname].app_name in job_name_map else -100) * (1 - cp.sum(x[i, :]))
                 # no previous allocation
                 if jobname not in self.prev_allocs:
                     continue
@@ -723,6 +723,19 @@ class WeightedMIPPolicy(object):
                              + cp.sum(x[:, x.shape[1]-len(self.pmp_configs):] @ np.asarray([config_[cluster_id] for config_ in self.pmp_configs]))
                 constraints.append(num_gpu_used <= num_gpus[cluster])
 
+        # for non pmp jobs can only select non pmp cofigs and pmp jobs can only select pmp configs
+        if self.allow_pmp:
+            for i, jobname in enumerate(jobnames):
+                if job_info[jobname].app_name in job_name_map:
+                    constraints.append(cp.sum(x[i, :(x.shape[1]-len(self.pmp_configs))]) == 0)
+                else:
+                    constraints.append(cp.sum(x[i, (x.shape[1]-len(self.pmp_configs)):]) == 0)
+                # force cannot select config with goodput = 0
+                for j in range(x.shape[1]):
+                    if A[i,j] == 0:
+                        constraints.append(x[i,j] == 0)
+            
+
         # constraint only one config per job
         constraints.append((x @ ones_configvec) <= ones_jobvec)
 
@@ -742,8 +755,11 @@ class WeightedMIPPolicy(object):
         
         # record new allocs as prev-alloc for next iter
         output_soln = np.round(x.value, decimals=0).astype(np.uint32)
-        
 
+        print("### solution vector")
+        for i, jobname in enumerate(jobnames):
+            soln = output_soln[i, :]
+            print(soln)        
 
         # convert binary solution to allocations
         job_allocs, cluster_allocs = dict(), dict()
@@ -761,7 +777,7 @@ class WeightedMIPPolicy(object):
                     if job_info[jobnames[i]].app_name not in job_name_map:
                         assert alloc_config_idx < x.shape[1] - len(self.pmp_configs)
                     else:
-                        assert alloc_config_idx >= x.shape[1] - len(self.pmp_configs)
+                        assert alloc_config_idx >= x.shape[1] - len(self.pmp_configs), f'{alloc_config_idx} < {x.shape[1]} - {len(self.pmp_configs)} = {x.shape[1] - len(self.pmp_configs)}'
 
                 job_allocs[jobname] = {}
                 # NOTE: this is a pmp job

@@ -73,7 +73,8 @@ class NodeInfo(object):
         self.resources = resources
         self.preemptible = preemptible
 
-job_name_map = {'imagenet': 'wresnet-2b'}
+# job_name_map = {'imagenet': 'wresnet-2b', 'bert': 'gpt-1.3b'}
+job_name_map = {'bert': 'gpt-1.3b'}
 cluster_name_map = {'rtx' : 'rtx', 'dgx-ext' : 'a100'}
 cluster_weights = {'rtx':1, 'dgx-ext':3}
 

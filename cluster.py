@@ -162,12 +162,16 @@ class Cluster(object):
                             config = None if job_allocation is None else {k: len(v) for k,v in job_allocation.items()}
                             job.allocate(config, job_allocation)
                         else:
-                            alloc = [(k,v) for k,v in job_allocation.items()]
-                            cluster, alloc = alloc[0][0], alloc[0][1]
+                            if job_allocation is None:
+                                cluster = None
+                                alloc = ()
+                            else:
+                                alloc = [(k,v) for k,v in job_allocation.items()]
+                                cluster, alloc = alloc[0][0], alloc[0][1]
                             if isinstance(self.policy, WeightedMIPFIXPolicy):
                                 assert len(alloc) == 0 or len(alloc) == job.target_num_replicas, f'{job.name} {job.target_num_replicas} {alloc}'
                             # change in resources
-                            if allocations.get(job.name) != self.allocations.get(job.name):
+                            if allocations.get(job.name) != self.allocations.get(job.name, None):
                                 placement = []
                                 for i in range(len(alloc)):
                                     if i == 0 or alloc[i] != alloc[i - 1]:

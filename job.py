@@ -274,6 +274,7 @@ class Job(object):
                     alloc_key += f'{self.pmp_config[cname]}_{cluster_name_map[cname]}_'
             alloc_key = alloc_key[:-1]
             total_time = self.iter_time_dict[job_name_map[self.app_name]][alloc_key]
+            print(f'### {self.name} {total_time}')
             # total_time = 0.01
 
             # stats_effciency
