@@ -39,6 +39,7 @@ class JobInfo(object):
         self.preemptible = preemptible
         self.multipliers = multipliers
 
+
 class JobInfoUnaware(object):
     def __init__(self, resources, speedup_fn, creation_timestamp, attained_service,
                  min_replicas, max_replicas, preemptible=True, multipliers=dict()):
@@ -63,6 +64,7 @@ class JobInfoUnaware(object):
         self.preemptible = preemptible
         self.multipliers = multipliers
         
+
 class NodeInfo(object):
     def __init__(self, resources, preemptible):
         """
@@ -73,10 +75,13 @@ class NodeInfo(object):
         self.resources = resources
         self.preemptible = preemptible
 
-# job_name_map = {'imagenet': 'wresnet-2b', 'bert': 'gpt-1.3b'}
+# job_name_map = {'imagenet': 'wresnet-13b', 'bert': 'gpt-1.3b'}
 job_name_map = {'bert': 'gpt-1.3b'}
-cluster_name_map = {'rtx' : 'rtx', 'dgx-ext' : 'a100'}
-cluster_weights = {'rtx':1, 'dgx-ext':3}
+# job_name_map = {'bert': 'gpt-1.3b'}
+# cluster_name_map = {'rtx' : 'rtx', 'dgx-ext' : 'a100'}
+# cluster_weights = {'rtx':1, 'dgx-ext':3}
+cluster_name_map = {'azure' : 'v100', 'dgx-ext' : 'a100'}
+cluster_weights = {'azure':1, 'dgx-ext':3}
 
 def order_cluster(cluster_names):
     return sorted(cluster_names, key=lambda x: cluster_weights[x], reverse=False)

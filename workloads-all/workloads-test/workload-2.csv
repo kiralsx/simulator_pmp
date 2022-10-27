@@ -1,0 +1,3 @@
+name,time,application,num_replicas,batch_size
+cifar10-1,0,cifar10,16,4096
+bert-1,0,bert,16,384

@@ -5,6 +5,11 @@ import math
 import cvxpy as cp
 import numpy as np
 import utils_gavel
+import itertools
+from pathlib import Path
+import os
+import json
+from utils import cluster_name_map
 # from optimus import OptimusPolicy
 
 CONFIGS_4GPU = (np.asarray([1, 1, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
@@ -14,8 +19,27 @@ CONFIGS_8GPU = (np.asarray([1, 1, 1, 1, 2, 3, 4, 5, 6, 7, 8]),
                 np.asarray([1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64]))
 
 
+def slice_cluster(cluster, homogeneous=True):
+        single = {cname: [] for cname in cluster}
+        for cname, num_gpu in cluster.items():
+            i = 0
+            while i <= num_gpu:
+                single[cname].append(i)
+                if i == 0:
+                    i = i + 1
+                elif i <= 8:
+                    i = i * 2
+                else:
+                    i = i + 8
+        res = list(itertools.product(*list(single.values())))[1:]
+        if homogeneous:
+            res = [e for e in res if e[0] == 0 or e[1] == 0]
+        # res = [{list(cluster.keys())[0]: e[0], list(cluster.keys())[1]: e[1]} for e in res]
+        return res
+
+
 class GavelPolicy(object):
-    def __init__(self, interval, policy="max_sum_throughput_perf"):
+    def __init__(self, interval, policy="max_sum_throughput_perf", pmp=False):
         self.rounds_received = {}
 
         self._debug = True        
@@ -39,6 +63,9 @@ class GavelPolicy(object):
         # cluster
         self._worker_id_to_cluster_mapping = {}
         self._cluster_to_worker_id_mapping = {}
+
+        self.allow_pmp = pmp
+                
 
     def populate_valid_configs(self, cluster_num_nodes, cluster_num_gpus):
         self._cluster_name = list(cluster_num_nodes.keys())
@@ -68,6 +95,33 @@ class GavelPolicy(object):
         self.num_gpu = {}
         for cluster_name, config in self.configs.items():
             self.num_gpu[cluster_name] = config[1][-1]
+
+        if self.allow_pmp:
+            iter_time_cache_path = os.path.join(os.path.dirname(__file__), f'iteration_time.txt')
+            if Path(iter_time_cache_path).is_file():
+                self.iter_time_dict = json.load(open(iter_time_cache_path))
+            else:   
+                raise FileNotFoundError('iteration time matrix is not found')
+            for jobname in self.iter_time_dict:
+                d = {}
+                for config, time in self.iter_time_dict[jobname].items():
+                    s = config.split('_')
+                    if int(s[0])==0:
+                        gpu = s[3]
+                        if gpu in [cluster_name_map[c] for c in self.configs]:
+                            if gpu not in d:
+                                d[gpu] = {}
+                            d[gpu][int(s[2])] = time
+                    elif int(s[2])==0:
+                        gpu = s[1]
+                        if gpu in [cluster_name_map[c] for c in self.configs]:
+                            if gpu not in d:
+                                d[gpu] = {}
+                            d[gpu][int(s[0])] = time
+                self.iter_time_dict[jobname] = d
+        else:
+            self.iter_time_dict = None
+
 
 
     def register_worker_callback(self):
@@ -236,7 +290,7 @@ class GavelPolicy(object):
     def update_priorities(self):
         # compute allocations
         self._allocation = self.compute_allocations()
-
+        
         # compute fraction
         fractions = {}
         for cname in self._cluster_name:
@@ -477,7 +531,8 @@ class GavelPolicy(object):
         for job_id, worker_ids in scheduled_jobs.items():
             cname = self._worker_id_to_cluster_mapping[worker_ids[0]]
             ids = self.convert_worker_ids(worker_ids)
-            res[job_id] = (cname, ids)  
+            # res[job_id] = (cname, ids)  
+            res[job_id] = {cname: ids}  
 
         print("### converted_ids:")  
         print(res)     
@@ -502,6 +557,8 @@ class GavelPolicy(object):
         # no enough gpus in this cluster
         if job.scale_factor > self.num_gpu[cname]:
             return 1e-1
+        if job.real_job_name is not None: # pmp job
+            return 1 / self.iter_time_dict[job.real_job_name][cluster_name_map[cname]][job.scale_factor]
         while sum(placement) < job.scale_factor:
             placement = (*placement, min(job.scale_factor - sum(placement), num_gpu_per_node))
 

@@ -1,5 +1,6 @@
 from email.mime import application
 import math
+from nis import cat
 from re import A, L
 import time
 from tkinter import E
@@ -28,8 +29,6 @@ class Job(object):
         self.completion_time = None
         self.current_time = 0
         self.rescale_time = 0
-        self.placement = ()
-        self.pmp_config = None
         self.atomic_bsz = 0
         self.accum_steps = 0
         # profile is also a dict w/ key=cluster_name, val=cluster_specific_profile
@@ -72,6 +71,17 @@ class Job(object):
         self.cluster_name = order_cluster(list(cluster_name_map.keys()))
         self.app_name = app_name 
         self.allow_pmp = allow_pmp
+        self.pmp_config = None
+        self.pmp_config_history = dict()
+
+        if not self.allow_pmp or self.app_name not in job_name_map:
+            self.real_job_name = None
+            self.placement = ()
+        else:
+            self.real_job_name = job_name_map[self.app_name]
+            self.placement = {}
+
+        self.overhead = 0
 
         # self.progress_track = []
     def seed_profiles(self, max_num_nodes, max_num_replicas):
@@ -161,8 +171,8 @@ class Job(object):
     # fixes batch size to obey memory/profiling constraints
     # needed for gavel
     def fix_minibatch_size(self):
-        if self.app_name in job_name_map:
-            raise Exception(f'{self.name}: should not fix mini batch size')
+        if self.allow_pmp and self.app_name in job_name_map:
+            return
         if self.target_num_replicas is not None and self.target_batch_size is not None:
             max_atomic_bsz = math.ceil(self.target_batch_size / self.target_num_replicas - 1e-8)
             for cluster, cluster_app in self.applications.items():
@@ -196,7 +206,11 @@ class Job(object):
                 (app.min_local_bsz, max_local_bsz), accumulation=True)
         else:
             local_bsz = math.ceil(batch_size / num_replicas - 1e-8)
-            self.accum_steps = math.ceil(local_bsz / max_local_bsz - 1e-8) - 1
+            try:
+                self.accum_steps = math.ceil(local_bsz / max_local_bsz - 1e-8) - 1
+            except Exception:
+                print(f'{self.name} {self.real_job_name} {self.target_batch_size} {local_bsz} {max_local_bsz}')
+                exit()
             if num_replicas == 1 and batch_size > app.init_batch_size:
                 self.accum_steps = max(1, self.accum_steps)
             self.atomic_bsz = math.ceil(local_bsz / (self.accum_steps + 1) - 1e-8)
@@ -258,7 +272,7 @@ class Job(object):
         if self.pmp_config is None:
             self.current_time += seconds
             return
-
+    
         delay = min(self.rescale_time, seconds)
         self.current_time += delay
         # self.attained_service += delay * sum(self.placement) # TODO: check what attained_service is used for
@@ -273,8 +287,7 @@ class Job(object):
                 else:
                     alloc_key += f'{self.pmp_config[cname]}_{cluster_name_map[cname]}_'
             alloc_key = alloc_key[:-1]
-            total_time = self.iter_time_dict[job_name_map[self.app_name]][alloc_key]
-            print(f'### {self.name} {total_time}')
+            total_time = self.iter_time_dict[self.real_job_name][alloc_key]
             # total_time = 0.01
 
             # stats_effciency

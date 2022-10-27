@@ -90,6 +90,7 @@ class WeightedMIPPolicy(object):
             self.iter_time_dict = json.load(open(iter_time_cache_path))
         else:   
             raise FileNotFoundError('iteration time matrix is not found')
+
         
     def populate_valid_configs(self, cluster_num_nodes, cluster_num_gpus):
         self.configs = dict()
@@ -111,12 +112,13 @@ class WeightedMIPPolicy(object):
 
         # store cluster config for future use
         self.cluster_num_nodes, self.cluster_ngpus_per_node = cluster_num_nodes, cluster_num_gpus
+    
 
+    def populate_pmp_configs(self, cluster_num_nodes, cluster_num_gpus):
         if self.allow_pmp:
-            self.cluster_spec = {cname: cluster_num_nodes[cname] * cluster_num_gpus[cname] for cname in self.cluster_ordering}
-            self.pmp_configs = slice_cluster(self.cluster_spec, homogeneous=not self.hete)
+            cluster_spec = {cname: cluster_num_nodes[cname] * cluster_num_gpus[cname] for cname in self.cluster_ordering}
+            self.pmp_configs = slice_cluster(cluster_spec, homogeneous=not self.hete)
             print(f'PMP configs: {self.pmp_configs}')
-
     
     def update_timeshare_penalties(self, new_allocs):
         max_window_num_obs = (self.window_len // self.sched_interval)
@@ -227,7 +229,10 @@ class WeightedMIPPolicy(object):
         goodputs = []
         for config in self.pmp_configs:
             key = f'{config[0]}_{cluster_name_map[self.cluster_ordering[0]]}_{config[1]}_{cluster_name_map[self.cluster_ordering[1]]}'
-            xput = 1 / self.iter_time_dict[job_name_map[job_info.app_name]][key]
+            if key not in self.iter_time_dict[job_info.real_job_name]:
+                xput = 0
+            else:
+                xput = 1 / self.iter_time_dict[job_info.real_job_name][key]
             goodputs.append(xput * job_info.efficiency)
         return goodputs
 
@@ -410,7 +415,7 @@ class WeightedMIPPolicy(object):
 
         print(f"### job allocs:")
         for jobname in job_allocs:
-            print(jobname, job_allocs[jobname])
+            print(jobname if jobs[jobname].real_job_name is None else jobs[jobname].real_job_name, job_allocs[jobname])
         
         # cluster-specific job placements
         cluster_job_placements = dict()
@@ -422,9 +427,9 @@ class WeightedMIPPolicy(object):
             else:
                 cluster_job_placements[cluster] = dict()
 
-        print(f'### cluster_job_placement:')
-        for cluster_name in cluster_job_placements:
-            print(cluster_name, cluster_job_placements[cluster_name])
+        # print(f'### cluster_job_placement:')
+        # for cluster_name in cluster_job_placements:
+        #     print(cluster_name, cluster_job_placements[cluster_name])
         
         # merge allocs
         job_placements = {}
@@ -435,9 +440,9 @@ class WeightedMIPPolicy(object):
                 job_placements[job_name] = {cluster_name: cluster_job_placements[cluster_name][job_name] for cluster_name in alloc}
                 # cluster_name, alloc = v
                 # job_placements[k] = (cluster_name, cluster_job_placements[cluster_name][k])
-        print('### job placements')
-        for job, placement in job_placements.items():
-            print(job, placement)
+        # print('### job placements')
+        # for job, placement in job_placements.items():
+        #     print(job, placement)
 
         print('######################## End ########################')
         return job_placements
@@ -637,7 +642,7 @@ class WeightedMIPPolicy(object):
         # power-up speedup matrix 
         if not self.allow_pmp:
             A = np.power(speedup_matrix, self.p_fairness)
-            print(f'### final speedup matrix:\n{A}')
+            # print(f'### final speedup matrix:\n{A}')
         else:
             # NOTE: append goodputs for pmp job
             speedup_matrix_ = np.hstack((speedup_matrix, np.zeros((speedup_matrix.shape[0], len(self.pmp_configs)), dtype=np.float32)))
@@ -658,11 +663,10 @@ class WeightedMIPPolicy(object):
                     realloc_config_ids = np.zeros((speedup_matrix_.shape[1]), dtype=np.bool8)
                     realloc_config_ids[speedup_matrix_.shape[1]-len(self.pmp_configs):] = True
                     realloc_config_ids = realloc_config_ids & ~prev_alloc
-                    speedup_matrix_[i, :] = np.where(realloc_config_ids, realloc_factors[i] * speedup_matrix_[i, :], speedup_matrix_[i, :])
-
+                    speedup_matrix_[i, :] = np.where(realloc_config_ids, realloc_factors[i] * speedup_matrix_[i, :], speedup_matrix_[i, :])            
 
             A = np.power(speedup_matrix_, self.p_fairness)
-            print(f'### final speedup matrix with pmp:\n{A}')            
+
         
         A = np.round(A, decimals=2)
         # TODO(suhasj): fix this clipping of matrix
@@ -686,6 +690,7 @@ class WeightedMIPPolicy(object):
                 # penalty for no-alloc in both sub-clusters
                 # obj_expr += (opt_lambda_no_alloc if job_info[jobname].app_name in job_name_map else -100) * (1 - cp.sum(x[i, :]))
                 obj_expr += (opt_lambda_no_alloc if job_info[jobname].app_name in job_name_map else -100) * (1 - cp.sum(x[i, :]))
+
                 # no previous allocation
                 if jobname not in self.prev_allocs:
                     continue
@@ -752,14 +757,16 @@ class WeightedMIPPolicy(object):
             print("The optimal value is", problem.value)
             print("A solution x is")
             print(np.round(x.value))
+
+        print("ilp finish")
         
         # record new allocs as prev-alloc for next iter
         output_soln = np.round(x.value, decimals=0).astype(np.uint32)
 
-        print("### solution vector")
-        for i, jobname in enumerate(jobnames):
-            soln = output_soln[i, :]
-            print(soln)        
+        # print("### solution vector")
+        # for i, jobname in enumerate(jobnames):
+        #     soln = output_soln[i, :]
+        #     print(soln)        
 
         # convert binary solution to allocations
         job_allocs, cluster_allocs = dict(), dict()
